@@ -54,6 +54,7 @@ fail.png
 .storage/
 .storage/obs
 .storage/metadata
+.storage/blobs
 .storage/*
 
 # Ignore downloaded repository from GitHub
