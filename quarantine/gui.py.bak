@@ -1,0 +1,523 @@
+#!/usr/bin/env python3
+"""
+Desktop-first graphical user interface for the web research engine.
+
+Provides a polished, desktop-class interface with:
+- Persistent navigation rail
+- Central workspace
+- Global search
+- Storage status display
+- Resizable panels and collapsible navigation
+- Access to all core backend functionality
+"""
+
+import tkinter as tk
+from tkinter import ttk, messagebox, scrolledtext
+import json
+import os
+import sys
+import sqlite3
+from pathlib import Path
+
+# Import backend modules
+from storage_manager import StorageManager, QuotaExceededError
+from query_parser import interpret_natural_language, StructuredQuery, QueryOperator
+from extraction import StructuredHTMLParser, CollectionProfile, ExtractionType
+from sitemap_module import SitemapParser, URLHierarchy, normalize_url, SitemapEntry, URLNode
+
+
+class ResearchEngineGUI:
+    """Main GUI window for the web research engine."""
+
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Web Research Engine")
+        self.root.geometry("1200x800")
+        self.root.minsize(800, 600)
+
+        # Initialize storage manager
+        self.storage = StorageManager()
+
+        # Setup UI
+        self._setup_styles()
+        self._create_menu()
+        self._create_main_frame()
+        self._create_status_bar()
+
+        # Load storage report
+        self._update_storage_report()
+
+    def _setup_styles(self):
+        """Setup ttk styles."""
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TopLevel.TFrame", background="#f0f0f0")
+        style.configure("NavButton.TButton",
+                        foreground="#000000",
+                        background="#e0e0e0",
+                        focuscolor="#e0e0e0")
+        style.map("NavButton.TButton",
+                  background=[("active", "#d0d0d0"), ("pressed", "#c0c0c0")])
+
+    def _create_menu(self):
+        """Create the menubar."""
+        menubar = tk.Menu(self.root, tearoff=0)
+        self.root.config(menu=menubar)
+
+        # File menu
+        file_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="Exit", command=self._on_exit)
+
+        # Help menu
+        help_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="About", command=self._show_about)
+
+    def _create_main_frame(self):
+        """Create the main frame with navigation rail and workspace."""
+        # Main container
+        self.main_frame = ttk.Frame(self.root, padding=0)
+        self.main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Navigation rail
+        self.nav_frame = ttk.Frame(self.main_frame, width=200, relief=tk.FLAT)
+        self.nav_frame.pack(side=tk.LEFT, fill=tk.Y, padx=0, pady=0)
+        self.nav_frame.pack_propagate(False)
+
+        # Navigation buttons
+        nav_labels = [
+            ("Overview", self._open_overview),
+            ("Research", self._open_research),
+            ("Web Discovery", self._open_web_discovery),
+            ("Site Explorer", self._open_site_explorer),
+            ("Search", self._open_search),
+            ("Documents", self._open_documents),
+            ("Entities", self._open_entities),
+            ("Collections", self._open_collections),
+            ("Crawl Queue", self._open_crawl_queue),
+            ("Reports", self._open_reports),
+            ("Settings", self._open_settings),
+        ]
+
+        for label, command in nav_labels:
+            btn = ttk.Button(self.nav_frame,
+                             text=label,
+                             style="NavButton.TButton",
+                             command=command)
+            btn.pack(fill=tk.X, padx=5, pady=2)
+
+        # Central workspace
+        self.workspace_frame = ttk.Frame(self.main_frame, padding=10)
+        self.workspace_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        # Global search bar at top of workspace
+        self._create_search_bar()
+
+        # Show default workspace
+        self._open_overview()
+
+    def _create_search_bar(self):
+        """Create the global search bar."""
+        search_frame = ttk.Frame(self.workspace_frame, relief=tk.FLAT)
+        search_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(search_frame, text="Global Search:").pack(side=tk.LEFT)
+        self.search_entry = ttk.Entry(search_frame, width=50)
+        self.search_entry.pack(side=tk.LEFT, padx=5)
+        self.search_entry.bind("<Return>", self._on_search_activate)
+
+        ttk.Button(search_frame, text="Go", command=self._on_search_activate).pack(side=tk.LEFT, padx=5)
+
+    def _create_status_bar(self):
+        """Create the status bar."""
+        self.status_bar = ttk.Frame(self.root, relief=tk.SUNKEN, padding=2)
+        self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        self.status_label = ttk.Label(self.status_bar, text="Ready",
+                                      anchor="w")
+        self.status_label.pack(side=tk.LEFT)
+
+        self.storage_label = ttk.Label(self.status_bar,
+                                       text="",
+ anchor="e")
+        self.storage_label.pack(side=tk.RIGHT, fill=tk.X, expand=True)
+
+    def _update_storage_report(self):
+        """Update the storage status bar."""
+        try:
+            report = self.storage.get_usage_report()
+            pct = report["pct_used_formatted"]
+            gib = report["available_gib"]
+            self.storage_label.config(
+                text=f"{pct} used, {gib:.2f} GiB available")
+        except Exception:
+            pass
+
+    # --- Workspace methods ---
+
+    def _open_overview(self):
+        """Open the overview workspace."""
+def _on_search_activate(self, event):
+        """Handle search entry return key."""
+        self._run_search(self.search_entry.get())
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Overview - Web Research Engine",
+                  font=("TkDefaultFont", 16)).pack(pady=20)
+
+        ttk.Label(self.workspace_frame,
+                  text="A persistent, comprehensive web research engine\n"
+                       "capable of discovering, exploring, extracting,\n"
+                       "organizing, and searching information.",
+                  justify=tk.CENTER).pack(pady=10)
+
+        ttk.Button(self.workspace_frame,
+                   text="Start a New Research Project",
+                   command=self._start_new_project).pack(pady=5)
+
+        ttk.Button(self.workspace_frame,
+                   text="Open Existing Project",
+                   command=self._open_existing_project).pack(pady=5)
+
+        ttk.Button(self.workspace_frame,
+                   text="Run a Natural-Language Scrape",
+                   command=self._start_nl_scrape).pack(pady=5)
+
+        # Storage info
+        self._update_storage_report()
+
+    def _open_research(self):
+        """Open the research workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Research Workspace",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Enter a natural-language research query:").pack(anchor=tk.W)
+
+        query_frame = ttk.Frame(self.workspace_frame)
+        query_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(query_frame, text="Query:").pack(side=tk.LEFT)
+        query_entry = ttk.Entry(query_frame, width=60)
+        query_entry.pack(side=tk.LEFT, padx=5)
+        query_entry.focus_set()
+
+        ttk.Button(query_frame,
+                   text="Run Query",
+                   command=lambda: self._run_research_query(query_entry.get())).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_web_discovery(self):
+        """Open the web discovery workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Web Discovery",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Enter a domain to explore its sitemaps and URL hierarchy:").pack(anchor=tk.W)
+
+        domain_frame = ttk.Frame(self.workspace_frame)
+        domain_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(domain_frame, text="Domain:").pack(side=tk.LEFT)
+        domain_entry = ttk.Entry(domain_frame, width=30)
+        domain_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(domain_frame,
+                   text="Explore",
+                   command=lambda: self._explore_domain(domain_entry.get())).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_site_explorer(self):
+        """Open the site explorer workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Site Explorer",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Site exploration workspace under construction.",
+                  wraplength=500).pack(pady=20)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_search(self):
+        """Open the search workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Search Workspace",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Enter a search query:").pack(anchor=tk.W)
+
+        search_frame = ttk.Frame(self.workspace_frame)
+        search_frame.pack(fill=tk.X, pady=5)
+
+        ttk.Label(search_frame, text="Phrase:").pack(side=tk.LEFT)
+        phrase_entry = ttk.Entry(search_frame, width=40)
+        phrase_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(search_frame,
+                   text="Search",
+                   command=lambda: self._run_search(phrase_entry.get())).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_documents(self):
+        """Open the documents workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Documents Workspace",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Documents workspace under construction.",
+                  wraplength=500).pack(pady=20)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_entities(self):
+        """Open the entities workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Entities Workspace",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Entities workspace under construction.",
+                  wraplength=500).pack(pady=20)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_collections(self):
+        """Open the collections workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Collections Workspace",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Collections workspace under construction.",
+                  wraplength=500).pack(pady=20)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_crawl_queue(self):
+        """Open the crawl queue workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Crawl Queue Workspace",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Crawl queue workspace under construction.",
+                  wraplength=500).pack(pady=20)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_reports(self):
+        """Open the reports workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Reports Workspace",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Reports workspace under construction.",
+                  wraplength=500).pack(pady=20)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    def _open_settings(self):
+        """Open the settings workspace."""
+        self._clear_workspace()
+        ttk.Label(self.workspace_frame,
+                  text="Settings Workspace",
+                  font=("TkDefaultFont", 16)).pack(pady=10)
+
+        ttk.Label(self.workspace_frame,
+                  text="Settings workspace under construction.",
+                  wraplength=500).pack(pady=20)
+
+        ttk.Button(self.workspace_frame,
+                   text="Back to Overview",
+                   command=self._open_overview).pack(pady=10)
+
+    # --- Action methods ---
+
+    def _start_new_project(self):
+        """Start a new research project."""
+        self._open_research()
+
+    def _open_existing_project(self):
+        """Open an existing research project."""
+        messagebox.showinfo("Info", "Open existing project feature coming soon.")
+
+    def _start_nl_scrape(self):
+        """Start a natural-language scrape."""
+        self._open_research()
+
+    def _explore_domain(self, domain):
+        """Explore a domain's sitemaps and URL hierarchy."""
+        if not domain:
+            return
+
+        try:
+            parser = SitemapParser()
+            sitemaps = parser.discover_sitemaps(f"https://{domain}")
+
+            self._clear_workspace()
+            ttk.Label(self.workspace_frame,
+                      text=f"Web Discovery for {domain}",
+                      font=("TkDefaultFont", 16)).pack(pady=10)
+
+            ttk.Label(self.workspace_frame,
+                      text=f"Found {len(sitemaps)} sitemap(s).").pack()
+
+            for sitemap in sitemaps[:5]:  # Show first 5
+                ttk.Label(self.workspace_frame,
+                          text=f"• {sitemap.location} "
+                          f"(discovered: {sitemap.discovered})").pack(anchor=tk.W)
+
+            ttk.Button(self.workspace_frame,
+                       text="Back to Overview",
+                       command=self._open_overview).pack(pady=10)
+        except Exception as e:
+            messagebox.showerror("Error",
+                               f"Failed to explore domain: {e}")
+            self._open_overview()
+
+    def _run_research_query(self, query_text):
+        """Run a natural-language research query."""
+        if not query_text.strip():
+            return
+
+        try:
+            structured = interpret_natural_language(query_text)
+            self._clear_workspace()
+            ttk.Label(self.workspace_frame,
+                      text="Research Results",
+                      font=("TkDefaultFont", 16)).pack(pady=10)
+
+            ttk.Label(self.workspace_frame,
+                      text=f"Subject: {structured.subject}").pack(anchor=tk.W)
+
+            if structured.required_phrases:
+                ttk.Label(self.workspace_frame,
+                          text=f"Required phrases: {structured.required_phrases}").pack(anchor=tk.W)
+
+            if structured.excluded_phrases:
+                ttk.Label(self.workspace_frame,
+                          text=f"Excluded phrases: {structured.excluded_phrases}").pack(anchor=tk.W)
+
+            if structured.content_types:
+                ttk.Label(self.workspace_frame,
+                          text=f"Content types: {structured.content_types}").pack(anchor=tk.W)
+
+            ttk.Button(self.workspace_frame,
+                       text="Back to Overview",
+                       command=self._open_overview).pack(pady=10)
+        except Exception as e:
+            messagebox.showerror("Error",
+                               f"Failed to parse query: {e}")
+            self._open_overview()
+
+    def _run_search(self, phrase):
+        """Run a search query."""
+        if not phrase.strip():
+            return
+
+        try:
+            # Simple FTS search using the database
+            conn = sqlite3.connect(str(self.storage.db_conn))
+            cursor = conn.cursor()
+
+            # Search for the phrase in the FTS index
+            try:
+                cursor.execute(
+                    "SELECT p.url, p.title, p.text FROM pages p "
+                    "JOIN pages_fts ft ON p.url = ft.url "
+                    "WHERE pages_fts MATCH ?",
+                    (phrase,))
+                results = cursor.fetchall()[:10]
+            except Exception:
+                results = []
+
+            self._clear_workspace()
+            ttk.Label(self.workspace_frame,
+                      text="Search Results",
+                      font=("TkDefaultFont", 16)).pack(pady=10)
+
+            if results:
+                ttk.Label(self.workspace_frame,
+                          text=f"Found {len(results)} results:").pack(anchor=tk.W)
+                for i, result in enumerate(results):
+                    ttk.Label(self.workspace_frame,
+                              text=f"  {i+1}. {result[1] or 'No title'} "
+                          f"(@ {result[0]})").pack(anchor=tk.W, padx=10)
+            else:
+                ttk.Label(self.workspace_frame,
+                          text="No matches found.").pack(anchor=tk.W)
+
+            ttk.Button(self.workspace_frame,
+                       text="Back to Overview",
+                       command=self._open_overview).pack(pady=10)
+
+            conn.close()
+        except Exception as e:
+            messagebox.showerror("Error", f"Search failed: {e}")
+            self._open_overview()
+
+    def _clear_workspace(self):
+        """Clear the workspace frame."""
+        for widget in self.workspace_frame.winfo_children():
+            widget.destroy()
+
+    def _on_exit(self):
+        """Handle exit."""
+        self.root.quit()
+        self.root.destroy()
+        sys.exit(0)
+
+    def _show_about(self):
+        """Show about dialog."""
+        messagebox.showinfo("About",
+                          "Web Research Engine v2.0\n"
+                          "A persistent, comprehensive web research engine.\n"
+                          "Copyright 2026")
+
+
+def main():
+    """Main entry point for the GUI application."""
+    root = tk.Tk()
+    app = ResearchEngineGUI(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
