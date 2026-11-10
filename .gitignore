@@ -1,0 +1,70 @@
+# Virtual environment
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+ENV/
+env.bak/
+env/foo/
+venv.bak/
+
+# IDE / editor
+.test_gui.py
+.pytest_cache/
+.coverage
+htmlcov/
+doc/
+*.egg-info/
+dist/
+build/
+*.so
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# Output files
+*.json
+*.csv
+*.txt
+*.log
+
+# macOS
+.DS_Store
+
+# Windows
+*.exe
+*.dll
+*.pdb
+*.ilk
+
+# Project specific
+.quarantine/
+fail.png
+
+# Python environments
+.venv
+.venv/
+
+# Kilo system
+/.kilo
+/.kilo/
+
+# Ignore launcher scripts that were created for testing
+launcher.sh
+SRP.desktop
+launch_SRP.desktop
+launch_SRP.sh
+launch_gui.py.tmp
+test_launcher.py
+tray_launcher.py
+test_gui.py
+launch_gui.py.bak
+launch_gui.py.corrupted
+
+# Ignore downloaded repository from GitHub
+ScrapeEngine
