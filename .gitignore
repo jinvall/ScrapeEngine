@@ -50,21 +50,11 @@ fail.png
 .venv
 .venv/
 
-# Kilo system
-/.kilo
-/.kilo/
-
-# Ignore launcher scripts that were created for testing
-launcher.sh
-SRP.desktop
-launch_SRP.desktop
-launch_SRP.sh
-launch_gui.py.tmp
-test_launcher.py
-tray_launcher.py
-test_gui.py
-launch_gui.py.bak
-launch_gui.py.corrupted
+# Storage system directories (large files that were causing timeout issues)
+.storage/
+.storage/obs
+.storage/metadata
+.storage/*
 
 # Ignore downloaded repository from GitHub
 ScrapeEngine
