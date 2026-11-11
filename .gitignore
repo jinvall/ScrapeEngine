@@ -50,8 +50,8 @@ fail.png
 .venv/
 
 # Kilo system
-/.kilo
-/.kilo/
+/.srp
+/.srp/
 
 # Ignore testing and launcher files
 launcher.sh

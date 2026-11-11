@@ -83,7 +83,7 @@ python3 scrape_engine.py crawl https://example.com --max-pages 50 --max-depth 3
 
 - Storage quota: 5 GiB (configurable in storage_manager)
 - Database: SQLite (`crawl_database.sqlite`)
-- User config: `~/.kilo/crawl_config.json`
+- User config: `~/.srp/crawl_config.json`
 
 ## License
 

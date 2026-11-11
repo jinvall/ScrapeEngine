@@ -27,7 +27,7 @@ class CollectionsView(QWidget):
         super().__init__(parent)
         self.service_registry = service_registry
         self.backend = backend
-        self.collections_file = os.path.expanduser('~/.kilo/collections.json')
+        self.collections_file = os.path.expanduser('~/.srp/collections.json')
         self.init_ui()
         
         # Load collections

@@ -263,7 +263,7 @@ class CrawlDialog(QDialog):
         
         super().__init__(parent)
         self.service_registry = service_registry
-        self.config_file = os.path.expanduser('~/.kilo/crawl_config.json')
+        self.config_file = os.path.expanduser('~/.srp/crawl_config.json')
         try:
             os.makedirs(os.path.dirname(self.config_file), exist_ok=True)
         except Exception:
