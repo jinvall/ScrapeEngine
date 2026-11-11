@@ -6,8 +6,9 @@ Full search interface with multiple search modes and filters.
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox,
     QTextEdit, QPushButton, QFrame, QListWidget, QTabWidget, QTableView,
-    QSplitter
+    QSplitter, QMessageBox
 )
+from PySide6.QtGui import QStandardItemModel, QStandardItem
 from PySide6.QtCore import Qt
 
 from gui.core.service_registry import ServiceRegistry
@@ -465,5 +466,3 @@ Status: 200 OK
         
         self.results_model.clear()
         self.result_details.clear()
-
-from PySide6.QtWidgets import QMessageBox

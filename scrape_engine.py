@@ -15,6 +15,13 @@ from __future__ import annotations
 
 import traceback
 try:
+    from storage_manager import StorageManager
+except Exception as _storage_import_err:
+    print(f"[DEBUG] scrape_engine: Storage manager import failed: {_storage_import_err}", file=__import__("sys").stderr)
+    traceback.print_exc()
+    StorageManager = None
+
+try:
     from crawl_nlp import CrawlNLPProcessor, CrawlObjectives
 except Exception as _nlp_import_err:
     print(f"[DEBUG] scrape_engine: NLP import failed: {_nlp_import_err}", file=__import__("sys").stderr)
@@ -163,8 +170,16 @@ class PageParser(HTMLParser):
 class DatabaseManager:
     """SQLite-backed persistent storage with FTS5 full-text search."""
 
-    def __init__(self, db_path: str = "crawl_database.sqlite"):
+    def __init__(self, db_path: str = "crawl_database.sqlite", storage_manager=None):
         self.db_path = db_path
+        if storage_manager:
+            # Use storage manager for blob storage, but maintain own DB connection for pages/fts
+            self.storage_manager = storage_manager
+            self.storage_manager_ref = storage_manager
+        else:
+            self.storage_manager = None
+            self.storage_manager_ref = None
+        # Always create our own connection for pages/fts tables
         self.conn = sqlite3.connect(self.db_path)
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute("PRAGMA synchronous=NORMAL")
@@ -218,11 +233,48 @@ class DatabaseManager:
                 VALUES (NEW.url, NEW.title, NEW.description, NEW.text);
             END"""
         )
+        # If we're using storage manager, initialize its tracking tables
+        if self.storage_manager:
+            self.storage_manager._init_storage_tracking()
+        
+        # Activity tracking tables for GUI
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS crawl_jobs (
+                id TEXT PRIMARY KEY,
+                url TEXT,
+                status TEXT,
+                pages_crawled INTEGER DEFAULT 0,
+                max_pages INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','utc')),
+                completed_at TEXT
+            )"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS search_queries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                query TEXT,
+                query_type TEXT,
+                result_count INTEGER DEFAULT 0,
+                status TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','utc'))
+            )"""
+        )
+        c.execute(
+            """CREATE TABLE IF NOT EXISTS research_sessions (
+                id TEXT PRIMARY KEY,
+                query TEXT,
+                status TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','utc')),
+                completed_at TEXT
+            )"""
+        )
         self.conn.commit()
 
     def page_exists(self, url: str) -> bool:
+        """Check if a page exists in storage (either storage manager or direct database)."""
+        norm = self._normalize_url_for_storage(url)
         c = self.conn.cursor()
-        c.execute("SELECT 1 FROM pages WHERE url = ?", (url,))
+        c.execute("SELECT 1 FROM pages WHERE url = ?", (norm,))
         return c.fetchone() is not None
 
     @staticmethod
@@ -239,8 +291,49 @@ class DatabaseManager:
         crawl_depth: int,
         referring_url: str | None = None,
     ) -> str:
+        """Store a page using storage manager quota enforcement if available, otherwise fallback to old behavior."""
         norm = self._normalize_url_for_storage(url)
         ch = self.content_hash(text)
+        
+        # Try to use storage manager quota enforcement if available
+        if self.storage_manager:
+            try:
+                # Use storage manager's store_blob for quota-aware storage
+                data = f"{norm}|{title}|{description}|{text}|{http_status}|{crawl_depth}|{referring_url or ''}".encode('utf-8')
+                sha256_hex, metadata = self.storage_manager.store_blob(
+                    data, 
+                    tags=["page", "crawled"],
+                    collection="pages"
+                )
+                # Still need to store page metadata in SQLite for FTS5 search
+                c = self.conn.cursor()
+                c.execute("SELECT content_hash FROM pages WHERE url = ?", (norm,))
+                row = c.fetchone()
+                now = datetime.now(timezone.utc).isoformat()
+                if row and row[0] == ch:
+                    return ch
+                c.execute(
+                    """UPDATE pages SET title=?, description=?, text=?, last_updated=?,
+                       content_hash=?, http_status=?, crawl_depth=?, referring_url=?
+                       WHERE url=?""",
+                    (title, description, text, now, ch, http_status, crawl_depth,
+                     referring_url, norm),
+                )
+                if not row:
+                    c.execute(
+                        """INSERT INTO pages (url, title, description, text, http_status, crawl_depth, referring_url, content_hash)
+                           VALUES (?,?,?,?,?,?,?,?)""",
+                        (norm, title, description, text, http_status, crawl_depth,
+                         referring_url, ch),
+                    )
+                self.conn.commit()
+                return ch
+            except Exception as e:
+                print(f"[DEBUG] scrape_engine: Storage manager error: {e}, falling back to direct storage", file=__import__("sys").stderr)
+                # Fall back to old behavior
+                pass
+        
+        # Fallback to old behavior using direct SQLite storage
         c = self.conn.cursor()
         c.execute("SELECT content_hash FROM pages WHERE url = ?", (norm,))
         row = c.fetchone()
@@ -282,6 +375,51 @@ class DatabaseManager:
         except (ValueError, AttributeError):
             return url
 
+    def _record_search(self, query: str, query_type: str, result_count: int, status: str = "completed"):
+        """Record a search query for activity tracking."""
+        c = self.conn.cursor()
+        c.execute(
+            """INSERT INTO search_queries (query, query_type, result_count, status)
+               VALUES (?, ?, ?, ?)""",
+            (query, query_type, result_count, status)
+        )
+        self.conn.commit()
+
+    def _record_crawl_job(self, job_id: str, url: str, status: str, pages_crawled: int = 0, max_pages: int = 0):
+        """Record a crawl job for activity tracking."""
+        c = self.conn.cursor()
+        c.execute(
+            """INSERT OR REPLACE INTO crawl_jobs (id, url, status, pages_crawled, max_pages)
+               VALUES (?, ?, ?, ?, ?)""",
+            (job_id, url, status, pages_crawled, max_pages)
+        )
+        self.conn.commit()
+
+    def _update_crawl_job(self, job_id: str, status: str, pages_crawled: int = None):
+        """Update crawl job status."""
+        c = self.conn.cursor()
+        if pages_crawled is not None:
+            c.execute(
+                """UPDATE crawl_jobs SET status = ?, pages_crawled = ? WHERE id = ?""",
+                (status, pages_crawled, job_id)
+            )
+        else:
+            c.execute(
+                """UPDATE crawl_jobs SET status = ? WHERE id = ?""",
+                (status, job_id)
+            )
+        self.conn.commit()
+
+    def _record_research_session(self, session_id: str, query: str, status: str = "active"):
+        """Record a research session."""
+        c = self.conn.cursor()
+        c.execute(
+            """INSERT INTO research_sessions (id, query, status)
+               VALUES (?, ?, ?)""",
+            (session_id, query, status)
+        )
+        self.conn.commit()
+
     def search_exact_phrase(self, phrase: str, domain: str | None = None,
                            case_insensitive: bool = True) -> list[dict]:
         c = self.conn.cursor()
@@ -319,6 +457,9 @@ class DatabaseManager:
                             "context_before": cb, "context_after": ca,
                             "position": pos, "occurrences": oc,
                             "crawl_timestamp": ts, "http_status": hs})
+        
+        # Record search activity
+        self._record_search(phrase, "exact_phrase", len(res))
         return res
 
     def search_literal_substring(self, substring: str, domain: str | None = None,
@@ -375,6 +516,9 @@ class DatabaseManager:
                 if u.lower().startswith(f"http://{domain}/") or u.lower().startswith(f"https://{domain}/"):
                     fr.append(r)
             res = fr
+        
+        # Record search activity
+        self._record_search(substring, "literal_substring", len(res))
         return res
 
     def search_regex(self, pattern: str, domain: str | None = None,
@@ -421,8 +565,10 @@ class DatabaseManager:
                 if u.lower().startswith(f"http://{domain}/") or u.lower().startswith(f"https://{domain}/"):
                     fr.append(r)
             res = fr
+        
+        # Record search activity
+        self._record_search(pattern, "regex", len(res))
         return res
-
 
 
     def stats(self) -> dict:
@@ -440,7 +586,8 @@ class DatabaseManager:
         tr = c.fetchone()
         c.execute("SELECT COUNT(*) FROM pages_fts")
         fs = c.fetchone()[0]
-        return {
+        
+        stats_dict = {
             "total_pages": total,
             "successful_pages": sp,
             "error_pages": ep,
@@ -448,17 +595,29 @@ class DatabaseManager:
             "timestamp_range": tr,
             "fts_index_size": fs,
         }
+        
+        # Add storage manager statistics if available
+        if self.storage_manager:
+            try:
+                stats_dict["storage_manager"] = self.storage_manager.get_usage_report()
+                stats_dict["storage_integrity_issues"] = self.storage_manager.verify_integrity()
+            except Exception as e:
+                print(f"[DEBUG] scrape_engine: Error getting storage manager stats: {e}", file=__import__("sys").stderr)
+        
+        return stats_dict
 class ScraperEngine:
-    def __init__(self, config: ScraperConfig, db_path: str | None = None):
+    def __init__(self, config: ScraperConfig, db_path: str | None = None, storage_manager=None):
         self.config = config
         self.start_host = (urlparse(config.start_url).hostname or "").lower()
         self.visited: set[str] = set()
         self.results: list[PageResult] = []
         self.robot_parsers: dict[str, RobotFileParser] = {}
         self.last_request_at = 0.0
-        self.db = DatabaseManager(db_path) if db_path else None
+        self.db = DatabaseManager(db_path, storage_manager=storage_manager)
         self.nlp_processor = CrawlNLPProcessor() if CrawlNLPProcessor else None
         self.objectives = None
+        self._paused = False
+        self._pause_event = None
         if getattr(config, 'instructions', None) and self.nlp_processor:
             try:
                 print(f"[DEBUG] scrape_engine: Processing instructions: {config.instructions[:100]}...", file=__import__("sys").stderr)
@@ -469,6 +628,18 @@ class ScraperEngine:
                 traceback.print_exc()
         elif getattr(config, 'objectives', None):
             self.objectives = config.objectives
+
+    def pause(self):
+        """Pause the crawl at the next safe point."""
+        self._paused = True
+
+    def resume(self):
+        """Resume a paused crawl."""
+        self._paused = False
+
+    def is_paused(self):
+        """Check if crawl is paused."""
+        return self._paused
 
     @staticmethod
     def normalize_url(url: str) -> str | None:
@@ -583,11 +754,22 @@ class ScraperEngine:
         start = self.normalize_url(self.config.start_url)
         if not start:
             raise ValueError("start_url must be a valid http:// or https:// URL")
-        if self.db is not None:
-            pass
+        
+        # Record crawl job start
+        import uuid
+        job_id = f"crawl_{uuid.uuid4().hex[:12]}"
+        self.db._record_crawl_job(job_id, start, "running", 0, self.config.max_pages)
+        
         print(f"[DEBUG] scrape_engine: Starting crawl from {start} with instructions: {getattr(self.config, 'instructions', '')[:50]}", file=__import__("sys").stderr)
         q = deque([(start, 0)])
         while q and len(self.results) < self.config.max_pages:
+            # Check for pause
+            while self._paused:
+                import time
+                time.sleep(0.5)
+                if not self._paused:
+                    break
+            
             url, depth = q.popleft()
             url = self.normalize_url(url)
             if not url or url in self.visited:
@@ -632,7 +814,18 @@ class ScraperEngine:
                 else:
                     for nl, d, orig_ln in candidates:
                         q.append((nl, d))
+        
+        # Check if crawl was paused
+        if self._paused:
+            print(f"[DEBUG] scrape_engine: Crawl paused at {len(self.results)} pages", file=__import__("sys").stderr)
+            self.db._update_crawl_job(job_id, "paused", len(self.results))
+            return self.results
+        
         print(f"[DEBUG] scrape_engine: Crawl completed. Fetched {len(self.results)} pages", file=__import__("sys").stderr)
+        
+        # Record crawl job completion
+        self.db._update_crawl_job(job_id, "completed", len(self.results))
+        
         return self.results
 
     def save(self, path: str):
@@ -728,19 +921,9 @@ def main():
         raise SystemExit("The 'crawl' command requires a URL argument")
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s: %(message)s")
-    cfg = ScraperConfig(start_url=getattr(args, "url", None) if args.command == "crawl" else "",
-                        max_pages=args.max_pages if args.command == "crawl" else 20,
-                        max_depth=args.max_depth if args.command == "crawl" else 2,
-                        request_delay=args.delay if args.command == "crawl" else 1.0,
-                        timeout=args.timeout if args.command == "crawl" else 15.0,
-                        retries=args.retries if args.command == "crawl" else 2,
-                        max_bytes=args.max_bytes if args.command == "crawl" else 2_000_000,
-                        same_domain=getattr(args, "same_domain", True),
-                        obey_robots=getattr(args, "obey_robots", True),
-                        user_agent=getattr(args, "user_agent", "EducationalScraper/1.0 (+respectful public-page research)"),
-                        output=getattr(args, "output", "scrape_results.json"),
-                        )
-    eng = ScraperEngine(cfg, db_path=args.db_path)
+    # Create storage manager for quota enforcement if available
+    storage_manager = StorageManager() if StorageManager else None
+    eng = ScraperEngine(cfg, db_path=args.db_path, storage_manager=storage_manager)
     try:
         if args.command == "crawl":
             pag = eng.crawl()

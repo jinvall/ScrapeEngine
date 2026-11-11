@@ -4,7 +4,7 @@ Dashboard and overview workspace for research activities.
 """
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QPushButton
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 
 from gui.core.service_registry import ServiceRegistry
 from gui.core.backend_adapter import BackendServiceAdapter
@@ -19,6 +19,14 @@ class OverviewView(QWidget):
         self.main_window = main_window
         
         self.init_ui()
+        
+        # Set up periodic refresh
+        self.refresh_timer = QTimer()
+        self.refresh_timer.timeout.connect(self.refresh_all)
+        self.refresh_timer.start(5000)  # Refresh every 5 seconds
+        
+        # Initial refresh
+        self.refresh_all()
     
     def init_ui(self):
         """Initialize overview UI."""
@@ -35,24 +43,20 @@ class OverviewView(QWidget):
         stats_layout = QHBoxLayout()
         
         # Storage card
-        storage_card = self.create_stat_card("Storage", "💾")
-        self.update_storage_card(storage_card)
-        stats_layout.addWidget(storage_card)
+        self.storage_card = self.create_stat_card("Storage", "💾")
+        stats_layout.addWidget(self.storage_card)
         
         # Research sessions card
-        research_card = self.create_stat_card("Research Sessions", "🔍")
-        self.update_research_card(research_card)
-        stats_layout.addWidget(research_card)
+        self.research_card = self.create_stat_card("Research Sessions", "🔍")
+        stats_layout.addWidget(self.research_card)
         
         # Crawl jobs card
-        crawl_card = self.create_stat_card("Crawl Jobs", "🕷️")
-        self.update_crawl_card(crawl_card)
-        stats_layout.addWidget(crawl_card)
+        self.crawl_card = self.create_stat_card("Crawl Jobs", "🕷️")
+        stats_layout.addWidget(self.crawl_card)
         
         # Search queries card
-        search_card = self.create_stat_card("Search Queries", "🔎")
-        self.update_search_card(search_card)
-        stats_layout.addWidget(search_card)
+        self.search_card = self.create_stat_card("Search Queries", "🔎")
+        stats_layout.addWidget(self.search_card)
         
         layout.addLayout(stats_layout)
         
@@ -66,7 +70,7 @@ class OverviewView(QWidget):
         activity_layout.addWidget(activity_title)
         
         # Recent activities list
-        self.activities_list = QLabel("No recent activity")
+        self.activities_list = QLabel("Loading...")
         self.activities_list.setStyleSheet("padding: 10px; font-family: monospace;")
         self.activities_list.setWordWrap(True)
         activity_layout.addWidget(self.activities_list)
@@ -171,30 +175,140 @@ class OverviewView(QWidget):
         """)
         return button
     
-    def update_storage_card(self, card):
+    def refresh_all(self):
+        """Refresh all data from backend services."""
+        self.refresh_storage_card()
+        self.refresh_research_card()
+        self.refresh_crawl_card()
+        self.refresh_search_card()
+        self.refresh_recent_activity()
+    
+    def refresh_storage_card(self):
         """Update storage statistics card."""
         storage_service = self.backend.get_storage_service()
         if storage_service:
             status = storage_service.get_storage_status()
             
-            total_gb = status.get('total_bytes', 0) / (1024**3)
+            total_bytes = status.get('total_bytes', 0)
             hard_gb = status.get('hard_ceiling_bytes', 0) / (1024**3)
-            used_gb = total_gb
             
-            card.value_label.setText(f"{used_gb:.1f}")
-            card.unit_label.setText(f"of {hard_gb:.0f} GiB")
+            # Display in appropriate units
+            if total_bytes >= 1024**3:
+                used_str = f"{total_bytes / (1024**3):.1f}"
+                unit_str = f"of {hard_gb:.0f} GiB"
+            elif total_bytes >= 1024**2:
+                used_str = f"{total_bytes / (1024**2):.1f}"
+                unit_str = f"MiB of {hard_gb:.0f} GiB"
+            else:
+                used_str = f"{total_bytes / 1024:.1f}"
+                unit_str = f"KiB of {hard_gb:.0f} GiB"
+            
+            self.storage_card.value_label.setText(used_str)
+            self.storage_card.unit_label.setText(unit_str)
     
-    def update_research_card(self, card):
-        """Update research sessions card."""
-        card.value_label.setText("0")
-        card.unit_label.setText("active sessions")
+    def refresh_research_card(self):
+        """Update research sessions card with real count."""
+        # Query database for research sessions
+        db = self.service_registry.get("database_manager")
+        if db:
+            try:
+                # Count active research sessions
+                c = db.conn.cursor()
+                c.execute("SELECT COUNT(*) FROM research_sessions WHERE status = 'active'")
+                count = c.fetchone()[0]
+                self.research_card.value_label.setText(str(count))
+                self.research_card.unit_label.setText("active sessions")
+            except Exception:
+                self.research_card.value_label.setText("0")
+                self.research_card.unit_label.setText("active sessions")
+        else:
+            self.research_card.value_label.setText("0")
+            self.research_card.unit_label.setText("active sessions")
     
-    def update_crawl_card(self, card):
-        """Update crawl jobs card."""
-        card.value_label.setText("0")
-        card.unit_label.setText("running/paused")
+    def refresh_crawl_card(self):
+        """Update crawl jobs card with real count."""
+        db = self.service_registry.get("database_manager")
+        if db:
+            try:
+                c = db.conn.cursor()
+                # Count all crawl jobs (running, paused, completed recently)
+                c.execute("SELECT COUNT(*) FROM crawl_jobs WHERE status IN ('running', 'paused', 'completed')")
+                count = c.fetchone()[0]
+                self.crawl_card.value_label.setText(str(count))
+                self.crawl_card.unit_label.setText("total jobs")
+            except Exception:
+                self.crawl_card.value_label.setText("0")
+                self.crawl_card.unit_label.setText("total jobs")
+        else:
+            self.crawl_card.value_label.setText("0")
+            self.crawl_card.unit_label.setText("total jobs")
     
-    def update_search_card(self, card):
-        """Update search queries card."""
-        card.value_label.setText("0")
-        card.unit_label.setText("queries today")
+    def refresh_search_card(self):
+        """Update search queries card with real count from today."""
+        db = self.service_registry.get("database_manager")
+        if db:
+            try:
+                from datetime import datetime, timezone
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                c = db.conn.cursor()
+                c.execute("SELECT COUNT(*) FROM search_queries WHERE date(created_at) = ?", (today,))
+                count = c.fetchone()[0]
+                self.search_card.value_label.setText(str(count))
+                self.search_card.unit_label.setText("queries today")
+            except Exception:
+                self.search_card.value_label.setText("0")
+                self.search_card.unit_label.setText("queries today")
+        else:
+            self.search_card.value_label.setText("0")
+            self.search_card.unit_label.setText("queries today")
+    
+    def refresh_recent_activity(self):
+        """Update recent activity list with real data."""
+        db = self.service_registry.get("database_manager")
+        if db:
+            try:
+                c = db.conn.cursor()
+                # Get recent crawls
+                c.execute("""
+                    SELECT 'crawl' as type, url, status, created_at 
+                    FROM crawl_jobs 
+                    ORDER BY created_at DESC LIMIT 5
+                """)
+                crawls = c.fetchall()
+                
+                # Get recent searches
+                c.execute("""
+                    SELECT 'search' as type, query, status, created_at 
+                    FROM search_queries 
+                    ORDER BY created_at DESC LIMIT 5
+                """)
+                searches = c.fetchall()
+                
+                # Get recent research
+                c.execute("""
+                    SELECT 'research' as type, query, status, created_at 
+                    FROM research_sessions 
+                    ORDER BY created_at DESC LIMIT 5
+                """)
+                research = c.fetchall()
+                
+                # Combine and sort
+                all_activity = list(crawls) + list(searches) + list(research)
+                all_activity.sort(key=lambda x: x[3], reverse=True)
+                
+                if all_activity:
+                    lines = []
+                    for act_type, val1, val2, created_at in all_activity[:10]:
+                        if act_type == 'crawl':
+                            lines.append(f"[{created_at[:16]}] 🕷️ Crawl: {val1[:50]}... ({val2})")
+                        elif act_type == 'search':
+                            lines.append(f"[{created_at[:16]}] 🔎 Search: {val1[:50]}... ({val2})")
+                        elif act_type == 'research':
+                            lines.append(f"[{created_at[:16]}] 🔍 Research: {val1[:50]}... ({val2})")
+                    self.activities_list.setText("\n".join(lines))
+                else:
+                    self.activities_list.setText("No recent activity")
+            except Exception as e:
+                self.activities_list.setText(f"Error loading activity: {e}")
+        else:
+            self.activities_list.setText("No database connection")

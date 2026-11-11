@@ -13,6 +13,11 @@ class BackendServiceAdapter(QObject):
     def __init__(self, service_registry):
         super().__init__()
         self.service_registry = service_registry
+        
+        # Configuration paths - these should point to where actual data lives
+        self._db_path = "scrape_engine.db"
+        self._storage_root = ".storage"
+        
         self._setup_backend_adapters()
     
     def _setup_backend_adapters(self):
@@ -68,7 +73,8 @@ class BackendServiceAdapter(QObject):
     
     def _init_scrape_engine_adapters(self, DatabaseManager, ScraperEngine, ScraperConfig):
         """Initialize ScrapeEngine adapters."""
-        self._database_manager = DatabaseManager()
+        # Use the actual database with data
+        self._database_manager = DatabaseManager(self._db_path)
         self._scraper_engine_class = ScraperEngine
         self._scraper_config_class = ScraperConfig
         
@@ -76,6 +82,7 @@ class BackendServiceAdapter(QObject):
         self.service_registry.register("database_manager", self._database_manager)
         self.service_registry.register("scraper_engine_class", self._scraper_engine_class)
         self.service_registry.register("scraper_config_class", self._scraper_config_class)
+        self.service_registry.register("db_path", self._db_path)
     
     def _init_extraction_adapters(self, StructuredHTMLParser, EntityExtractor, CollectionProfile):
         """Initialize extraction adapters."""
@@ -97,9 +104,12 @@ class BackendServiceAdapter(QObject):
     
     def _init_storage_adapters(self, StorageManager):
         """Initialize storage adapters."""
-        self._storage_manager_class = StorageManager
+        # Create a persistent storage manager instance with the correct path
+        self._storage_manager = StorageManager(self._storage_root)
         
-        self.service_registry.register("storage_manager_class", self._storage_manager_class)
+        self.service_registry.register("storage_manager_class", StorageManager)
+        self.service_registry.register("storage_manager_instance", self._storage_manager)
+        self.service_registry.register("storage_root", self._storage_root)
     
     def _init_query_parser_adapters(self, NaturalLanguageParser, StructuredQuery):
         """Initialize query parser adapters."""
@@ -361,7 +371,8 @@ class StorageServiceAdapter(QObject):
     def __init__(self, service_registry):
         super().__init__()
         self.service_registry = service_registry
-        self.storage = service_registry.get("storage_manager_class")()
+        # Use the persistent instance from registry
+        self.storage = service_registry.get("storage_manager_instance")
     
     def get_storage_status(self) -> Dict:
         """Get storage usage and quota information."""

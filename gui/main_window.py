@@ -80,6 +80,25 @@ class SRPMainWindow(QMainWindow):
         # Create main layout
         self.main_layout = QHBoxLayout(self.central_widget)
         
+        # Initialize workspace widgets dictionary
+        self.workspace_widgets = {}
+        
+        # Map display names to internal workspace IDs and factory methods
+        self.workspace_factories = {
+            "Overview": ("overview", self.create_overview_workspace),
+            "Research": ("research", self.create_research_workspace),
+            "Web Discovery": ("web_discovery", self.create_web_discovery_workspace),
+            "Site Explorer": ("site_explorer", self.create_site_explorer_workspace),
+            "Search": ("search", self.create_search_workspace),
+            "Documents": ("documents", self.create_documents_workspace),
+            "Entities": ("entities", self.create_entities_workspace),
+            "Relationships": ("relationships", self.create_relationships_workspace),
+            "Collections": ("collections", self.create_collections_workspace),
+            "Crawl Queue": ("crawl_queue", self.create_crawl_queue_workspace),
+            "Reports": ("reports", self.create_reports_workspace),
+            "Storage": ("storage", self.create_storage_workspace),
+        }
+        
         # Create navigation panel
         self.create_navigation_panel()
         
@@ -111,24 +130,9 @@ class SRPMainWindow(QMainWindow):
         
         # Navigation buttons
         self.nav_buttons = {}
-        workspaces = [
-            ("Overview", "📊", "Overview workspace"),
-            ("Research", "🔍", "Research workspace"),
-            ("Web Discovery", "🕷️", "Web discovery workspace"),
-            ("Site Explorer", "🌐", "Site explorer workspace"),
-            ("Search", "🔎", "Search workspace"),
-            ("Documents", "📄", "Documents workspace"),
-            ("Entities", "🏷️", "Entities workspace"),
-            ("Relationships", "🔗", "Relationships workspace"),
-            ("Collections", "📚", "Collections workspace"),
-            ("Crawl Queue", "⏱️", "Crawl queue workspace"),
-            ("Reports", "📊", "Reports workspace"),
-            ("Storage", "💾", "Storage workspace"),
-        ]
-        
-        for workspace_id, icon, tooltip in workspaces:
-            button = QPushButton(f"  {icon} {workspace_id}")
-            button.setToolTip(tooltip)
+        for display_name, (workspace_id, factory) in self.workspace_factories.items():
+            button = QPushButton(f"  {display_name}")
+            button.setToolTip(f"{display_name} workspace")
             button.setCheckable(True)
             button.clicked.connect(lambda checked, wid=workspace_id: self.switch_workspace(wid))
             self.nav_buttons[workspace_id] = button
@@ -158,7 +162,7 @@ class SRPMainWindow(QMainWindow):
         
         self.workspace_layout.addWidget(self.workspace_content)
         
-        self.main_layout.addWidget(self.workspace_panel, stretch= dll")
+        self.main_layout.addWidget(self.workspace_panel, stretch=1)
     
     def create_status_bar(self):
         """Create the status bar."""
@@ -249,6 +253,8 @@ class SRPMainWindow(QMainWindow):
         # File menu
         file_menu = menubar.addMenu("File")
         file_menu.addAction("New Research Session", self.show_new_research_dialog)
+        file_menu.addAction("New Crawl", self.show_new_crawl_dialog)
+        file_menu.addSeparator()
         file_menu.addAction("Save", self.save_session)
         file_menu.addAction("Export", self.export_results)
         file_menu.addSeparator()
@@ -333,8 +339,21 @@ class SRPMainWindow(QMainWindow):
     
     def switch_workspace(self, workspace_id: str):
         """Switch to a different workspace."""
+        # Create workspace on-demand if not already created
         if workspace_id not in self.workspace_widgets:
-            return
+            # Find the factory for this workspace
+            for display_name, (wid, factory) in self.workspace_factories.items():
+                if wid == workspace_id:
+                    try:
+                        self.workspace_widgets[workspace_id] = factory()
+                    except Exception as e:
+                        import traceback
+                        print(f"[DEBUG] Failed to create workspace {workspace_id}: {e}", file=__import__("sys").stderr)
+                        traceback.print_exc()
+                        return
+                    break
+            else:
+                return  # Workspace not found
         
         # Update current workspace
         self.current_workspace = workspace_id

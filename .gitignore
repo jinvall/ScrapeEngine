@@ -12,7 +12,6 @@ env/foo/
 venv.bak/
 
 # IDE / editor
-.test_gui.py
 .pytest_cache/
 .coverage
 htmlcov/
@@ -50,12 +49,28 @@ fail.png
 .venv
 .venv/
 
-# Storage system directories (large files that were causing timeout issues)
+# Kilo system
+/.kilo
+/.kilo/
+
+# Ignore testing and launcher files
+launcher.sh
+SRP.desktop
+launch_SRP.desktop
+launch_SRP.sh
+launch_gui.py.tmp
+test_gui.py
+test_launcher.py
+tray_launcher.py
+launch_gui.py.bak
+launch_gui.py.corrupted
+
+# Ignore downloaded repository
+ScrapeEngine
+
+# Storage system directories
 .storage/
 .storage/obs
 .storage/metadata
 .storage/blobs
 .storage/*
-
-# Ignore downloaded repository from GitHub
-ScrapeEngine
